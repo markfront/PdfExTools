@@ -7,7 +7,7 @@ setuptools.setup(
     name='PdfExTools',
     version='0.1.0',
     author='Mark Front',
-    author_email='markfront@gmail.com',
+    author_email='mark.front@gmail.com',
     description='A Python package of extended tools to process pdf files',
     long_description=long_description,
     long_description_content_type="text/markdown",
