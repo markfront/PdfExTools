@@ -15,7 +15,7 @@ pip install PdfExTools
 ```
 from pdfextools import PageNumberExtractor
 
-pdf_file = r"C:\Users\marfront\Jupyter\SamplePDFs\2-col-pubmed.pdf"
+pdf_file = r"C:\Users\mkf\Jupyter\SamplePDFs\2-col-pubmed.pdf"
 
 print("pdf_file: " + pdf_file)
 
