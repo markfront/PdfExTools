@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name='PdfExTools',
-    version='0.1.2',
+    version='0.2.0',
     author='Mark Front',
     author_email='mark.front@gmail.com',
     description='A Python package of extended tools to process pdf files',

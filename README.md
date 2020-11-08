@@ -15,7 +15,7 @@ pip install PdfExTools
 ```
 from pdfextools import PageNumberExtractor
 
-pdf_file = r"C:\Users\margu\Jupyter\SamplePDFs\2-col-pubmed.pdf"
+pdf_file = r"./sample-pdfs/2-col-pubmed.pdf"
 
 print("pdf_file: " + pdf_file)
 
@@ -27,6 +27,6 @@ print(page_numbers)
 
 The result will be a dictionary mapping logical page numbers (base-0) to the physical ones. For example:
 ```
-pdf_file: \Users\margu\Jupyter\SamplePDFs\2-col-pubmed.pdf
+pdf_file: /sample-pdfs/2-col-pubmed.pdf
 {0: 11, 1: 12, 2: 13, 3: 14, 4: 15, 5: 16, 6: 17, 7: 18, 8: 19, 9: 20, 10: 21, 11: 22, 12: 23}
 ```

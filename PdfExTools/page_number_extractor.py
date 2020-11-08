@@ -299,11 +299,7 @@ class PageNumberExtractor:
 
 if __name__ == "__main__":
     pdf_file = sys.argv[1]
-
-    #pdf_file = r"F:\guba3\temp\2030108_996305_Mannioui A%5fMultiple Sclerosis Journal%5fpg1421–1432%5f2017.pdf"
-
-    #pdf_file = r"F:\guba3\jupyter\AprimoMapping\test-page-number\1975215_1028115_Marrie RA%5fAAN%5fp1235-1240%5f2006.pdf"
-
+    
     print("pdf_file: " + pdf_file)
 
     extractor = PageNumberExtractor()
