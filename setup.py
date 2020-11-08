@@ -11,7 +11,7 @@ setuptools.setup(
     description='A Python package of extended tools to process pdf files',
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url='https://github.com/markfront/PdfTools',
+    url='https://github.com/markfront/PdfExTools',
     packages=setuptools.find_packages(),
     install_requires=['pdfplumber>=0.5'],
     scripts=['PdfExTools'],
