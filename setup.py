@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name='PdfExTools',
-    version='0.1.0',
+    version='0.1.2',
     author='Mark Front',
     author_email='mark.front@gmail.com',
     description='A Python package of extended tools to process pdf files',
@@ -14,7 +14,7 @@ setuptools.setup(
     url='https://github.com/markfront/PdfTools',
     packages=setuptools.find_packages(),
     install_requires=['pdfplumber>=0.5'],
-
+    scripts=['PdfExTools'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
