@@ -4,8 +4,8 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="pdfextools-20_mark.gu-front_20",
-    version="0.2.0",
+    name="pdfextools",
+    version="0.3.0",
     author="Mark Front",
     author_email="mark.front@gmail.com",
     description="A set of extended tools to process pdf files",

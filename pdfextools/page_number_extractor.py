@@ -1,15 +1,17 @@
+import json
+import logging
+import math
+import os
 import re
 import sys
-import json
-import math
+import traceback
 
 import fitz
 
 """
-assumption:
-(1) each page (other than the 1st page) should have a page number printed in header or footer.
-(2) the page number might not start from 1, but should be in ascending order.
-(3) sometimes the 1st page might have meta info about the document that often not appear in other pages.
+assumptions:
+(1) most pages should have a page number (arabic number) printed in header or footer.
+(2) the page numbers might not start from 1, but should be in ascending order.
 """
 
 class PageNumberExtractor:
@@ -24,75 +26,102 @@ class PageNumberExtractor:
             result = { "Text": self.text, "Bbox": self.bbox }
             return json.dumps(result)
 
-        def __cmp__(self, other):
-            result = -1
-            bbox1 = self.bbox
-            bbox2 = other.bbox
-            if bbox1[1] < bbox2[1]:
-                result = -1
-            elif bbox1[1] > bbox2[1]:
-                result = 1
-            else:
-                if bbox1[0] < bbox2[0]:
-                    result = -1
-                elif bbox1[0] > bbox2[0]:
-                    result = 1
-                else:
-                    result = 0
-            return result
+    def __init__(self, log_level=None):
+        if log_level is None:
+            log_level = logging.INFO
+        logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
+        self.logger = logging.getLogger(__name__)
 
     def process(self, input_pdf):
         """
-        entry method of the class
-        return a dictionary of logical page number to physical ones (aka. the # printed on page).
+        Entry method of the class
+        Return a dictionary of logical page number to physical ones (aka. the # printed on page).
         e.g., { 0:15, 1:16, 2:17, ..., 9:24 }
         """
 
-        total_pages, cand_lines_by_page = self.get_candidate_lines(input_pdf)
+        max_line_levels = 5
+        total_pages, cand_lines_by_level, cand_lines_by_page = self.get_candidate_lines(input_pdf, max_line_levels)
+        
+        # note: total_pages can be more than len(cand_lines_by_page)
+        # because we check no more than 20 pages
+        longest_pairs = {}
+        max_len = 0
 
-        logical_pg_numbers = range(0, total_pages)
+        for line_level in range(0, max_line_levels):
+            # level-by-level detect page numbers by checking each page's line counted from top/bottom
+            pairs = self.find_page_numbers(cand_lines_by_level[line_level])
+            if len(pairs) > max_len:
+                longest_pairs = pairs
+                max_len = len(pairs)
+
+        # try put all lines in each page together, this may return a different sequence
 
         pairs = self.find_page_numbers(cand_lines_by_page)
+        
+        if len(pairs) > max_len:
+            longest_pairs = pairs
 
-        result = self.fill_gaps(pairs, logical_pg_numbers)
+        logical_pg_numbers = range(0, total_pages)
+        result = self.fill_gaps(longest_pairs, logical_pg_numbers)
 
         return result
 
-    def get_candidate_lines(self, input_pdf, max_pages_to_check=20):
+    def get_candidate_lines(self, input_pdf, max_line_levels=5, max_pages_to_check=20):
         """
-        given the pdf, return the header/footer lines that likely contain page numbers.
-        here use PyMuPdf to read pdf. Other pdf libraries can be used too.
-        by default, pages_to_check = 20, don't have to check all pages to find a pattern
+        Given the pdf, return the header/footer lines that likely contain page numbers.
+        Here use PyMuPdf to read pdf. Other pdf libraries can be used too.
+        By default, pages_to_check = 20, don't have to check all pages to find a pattern.
         """
         pdf_doc = fitz.open(input_pdf)
 
         total_pages = pdf_doc.pageCount
 
-        cand_lines_by_page = []
-        for pgn, page in enumerate(pdf_doc):
-            if pgn >= max_pages_to_check:
-                break
+        cand_lines_by_level = {}  # dictionary of dictionaries: line-level k ==> { pgn ==> text of the k-th line }
+        for i in range(0, max_line_levels*2):
+            cand_lines_by_level[i] = {}   # initialize a dictionary for each line level
 
-            pg_dict = page.getText("dict")
+        cand_lines_by_page = {}   # dictionary of pgn ==> all selected lines text in the page
 
-            lines = self.get_text_lines_in_page(pg_dict)
+        try:
+            for pgn, page in enumerate(pdf_doc):
+                if pgn >= max_pages_to_check:
+                    break
 
-            cand_lines = []   # candidate lines to check for this page
+                pg_dict = page.getText("dict")
 
-            if len(lines) <=6:
-                for line in lines:
-                    cand_lines.append(line.text)
-            elif len(lines) >= 3:
-                cand_lines.append(lines[0].text)   # 1st line
-                cand_lines.append(lines[1].text)   # 2nd line
-                cand_lines.append(lines[2].text)   # 3rd line
-                cand_lines.append(lines[-1].text)  # 1st last line
-                cand_lines.append(lines[-2].text)  # 2nd last line
-                cand_lines.append(lines[-3].text)  # 3rd last line
+                lines = self.get_text_lines_in_page(pg_dict)
 
-            cand_lines_by_page.append("\n".join(cand_lines))
+                # add candidate lines to check for this page
+                selected_lines = []
+                n = len(lines)
+                if n <= max_line_levels:
+                    for i in range(0, n):
+                        cand_lines_by_level[i][pgn] = lines[i].text
+                        selected_lines.append(lines[i].text)
+                elif n >= max_line_levels:
+                    # add lines from page top
+                    i = 0
+                    while i < max_line_levels:
+                        cand_lines_by_level[i][pgn] = lines[i].text
+                        selected_lines.append(lines[i].text)
+                        i += 1
 
-        return total_pages, cand_lines_by_page
+                    # add lines from page bottom
+                    i = 0
+                    while i < max_line_levels:
+                        cand_lines_by_level[max_line_levels + i][pgn] = lines[n-1-i].text  
+                        selected_lines.append(lines[n-1-i].text)
+                        i += 1
+
+                cand_lines_by_page[pgn] = "\n".join(selected_lines)
+
+        except Exception as ex:
+            self.logger.debug("get_candidate_lines() - Exception: {}".format(ex))
+            traceback.print_exc()
+        finally:
+            pdf_doc.close()
+
+        return total_pages, cand_lines_by_level, cand_lines_by_page
 
     def get_text_lines_in_page(self, page_dict):
         pieces = []
@@ -105,8 +134,9 @@ class PageNumberExtractor:
                 for span in line["spans"]:
                     if len(span["text"]) > 0:
                         text_spans.append(span["text"])
-                text = " ".join(text_spans)
-                pieces.append(self.TextLineObj(text, bbox))
+                text = " ".join(text_spans).strip()
+                if len(text) > 0:  # ignore empty lines
+                    pieces.append(self.TextLineObj(text, bbox))
 
         # order the lines in up-down then left-right order
         sorted_pieces = sorted(pieces, key=lambda x: (x.bbox[1], x.bbox[0]))
@@ -116,8 +146,7 @@ class PageNumberExtractor:
         return merged_lines
 
     def get_rounded_bbox(self, bbox):
-        new_box = [round(bbox[0]), round(bbox[1]), round(bbox[2]), round(bbox[3])]
-        return new_box
+        return [round(bbox[0]), round(bbox[1]), round(bbox[2]), round(bbox[3])]
 
     def merge_pieces_in_same_line(self, sorted_pieces):
         result = []
@@ -151,15 +180,13 @@ class PageNumberExtractor:
         for piece in pieces:
             text_list.append(piece.text)
             bbox_list.append(piece.bbox)
-        merged_text = " ".join(text_list)
+        merged_text = " ".join(text_list).strip()
         merged_bbox = self.merge_bboxes(bbox_list)
         return self.TextLineObj(merged_text, merged_bbox)
 
     def merge_bboxes(self, boxes):
-        if len(boxes) == 0:
+        if len(boxes) != 4:
             return []
-        elif len(boxes) == 1:
-            return boxes[0]
 
         x1, y1, x2, y2 = boxes[0]
         for i in range(1, len(boxes)):
@@ -169,100 +196,136 @@ class PageNumberExtractor:
             y2 = max(y2, boxes[i][3])
         return [x1, y1, x2, y2]
 
-    def find_page_numbers(self, text_lines):
+    def can_be_valid_pair(self, num_set1, num_set2, max_diff):
         """
-        return a dictionary mapping logical page # to physical ones.
+        check if exists a pair (n1, n2), where n1 from num_set1, n2 from num_set2, satisfying:
+        (1) n1 < n2
+        (2) n2 - n1 <= max_diff
+        """
+        result = False
+        if len(num_set1) > 0 and len(num_set2) > 0:
+            for i in num_set1:
+                for j in num_set2:
+                    if i < j and j-i <=max_diff:
+                        return True
+        return result
+
+    def find_page_numbers(self, cand_lines_by_page):
+        """
+        Return a dictionary mapping logical page # to physical ones.
         e.g., {0: 11, 1: 12, 2: 13, 3: 14, 4: 15, 5: 16, 6: 17}
         """
+
+        total_logical_pages = len(cand_lines_by_page)
 
         # step 1: assume each line is a line from a page
         # a page number suppose to be unique to the correspoding page
         # for a seen number, here to find which pages it appears in
-        number_to_page_mapping = {}
-        for pgn, line in enumerate(text_lines):
-            #print(line)
-            numbers = re.findall(r"\d+", line)
-            if (numbers):
-                # all numbers in this line
-                for num_str in numbers:
+        physical_to_logical_mapping = {}  # physical pgn ==> a set of logical pgn
+        logical_to_physical_mapping = {}  # logical pgn ==> a sorted list of physical pgn
+        for pgn, line_text in cand_lines_by_page.items():
+            physical_numbers = re.findall(r"\d+", line_text)
+            physical_pgn_list = []
+            if physical_numbers:
+                # all physical numbers in this line
+                for num_str in physical_numbers:
                     num = int(num_str)
-                    if num in number_to_page_mapping.keys():
-                        number_to_page_mapping[num].add(pgn)
+                    physical_pgn_list.append(num)
+                    if num in physical_to_logical_mapping.keys():
+                        physical_to_logical_mapping[num].add(pgn)
                     else:
-                        number_to_page_mapping[num] = {pgn}
+                        physical_to_logical_mapping[num] = {pgn}
 
-        print("\nnumber_to_page_list:")
-        print(number_to_page_mapping)
+            logical_to_physical_mapping[pgn] = sorted(physical_pgn_list)
+
+        self.logger.debug("logical_to_physical_mapping:")
+        self.logger.debug(logical_to_physical_mapping)
+
+        self.logger.debug("physical_to_logical_mapping:")
+        self.logger.debug(physical_to_logical_mapping)
 
         # step 2: the numbers appearing in only 1 page is likely the page number,
         # because a page number has to be unique across the pages (they should not appear more than once)
         # to allow some resilence to noices, a real page number might happen to occur more than once
         uniq_numbers = []
-        for num, pg_list in number_to_page_mapping.items():
-            if len(pg_list) <= 3:   
+        max_occur = 3
+        for num, pg_list in physical_to_logical_mapping.items():
+            if len(pg_list) <= max_occur:
                 uniq_numbers.append(num)
 
-        # step 3: sort the "unique" numbers so that they are ordered along x-axis
+        self.logger.debug("len(uniq_numbers) = " + str(len(uniq_numbers)))
+
+        # step 3: sort the "unique" numbers so that they are in ascending order
         uniq_numbers.sort()
 
-        print("uniq_numbers")
-        print(uniq_numbers)
+        self.logger.debug("sorted uniq_numbers:")
+        self.logger.debug(uniq_numbers)
 
-        # step 4: find all candidate intervals that are continuous and long enough
-        cand_intervals = []
+        # step 4: find all candidate intervals that are roughly continuous and increasing
+        cand_sequences = []
         i = 0
         j = 0
         n = len(uniq_numbers)
-        min_len = max(3, round(len(text_lines) * 0.6))  # should cover >60% pages
+        min_len = max(3, round(total_logical_pages * 0.6))  # should cover >60% pages
+        max_diff = 3  # diff btw two consecutive numbers should be no more than 3
         while i < n:
             j = i+1
-            while j<n and uniq_numbers[j-1]+1 == uniq_numbers[j]:
+            while j<n and uniq_numbers[j] - uniq_numbers[j-1] <= max_diff \
+                and self.can_be_valid_pair(
+                    physical_to_logical_mapping[uniq_numbers[j-1]],  # logical pg number set1
+                    physical_to_logical_mapping[uniq_numbers[j]],    # logical pg number set2
+                    max_diff
+                ):
                 j += 1
 
             if (j-i) > min_len:
-                cand_intervals.append((i, j))  # interval = [i, j), i inclusive, j exclusive
+                cand_sequences.append(uniq_numbers[i:j]) 
 
             i = j
 
-        # step 5: find the interval that covers most logical page numbers
-        max_i = 0
-        max_j = 0
-        max_pg_covered = 0
-        for interval in cand_intervals:
-            a, b = interval
-            print(interval)
-            pg_covered = set()
-            for idx in range(a, b):
-                num = uniq_numbers[idx]
-                pg_covered = pg_covered.union(number_to_page_mapping[num])
-                if len(pg_covered) > max_pg_covered:
-                    max_i = a
-                    max_j = b
-                    max_pg_covered = len(pg_covered)
+        self.logger.debug("cand_sequences:")
+        self.logger.debug(cand_sequences)
 
-        longest_seq = uniq_numbers[max_i : max_j]
+        # step 5: from the candidate sequence, pick the one whose sum-diff 
+        # (sum of diff of current pgn - previous pgn) is closest to the total logical pages. 
+        # e.g., if the pdf has 9 pages, then the sum-diff should ideally be 9-1 = 8.
+        # if tie, pick the longer sequence (i.e., the one that covers more pages)
+        closest_seq = []
+        min_dist = 99999
+        for seq in cand_sequences:
+            sum_diff = seq[-1] - seq[0]
+            dist = abs(sum_diff - total_logical_pages)
+            if dist < min_dist:
+                closest_seq = seq
+                min_dist = dist
+            elif dist == min_dist:
+                # on tie, pick the one has smaller starting page#
+                if seq[0] < closest_seq[0]:
+                    closest_seq = seq
+        
+        self.logger.debug("closest_seq:")
+        self.logger.debug(closest_seq)
 
-        print("longest_seq:")
-        print(longest_seq)
+        # step 6: turn list to dictionary
+        pgn_pairs = {}
 
-        # step 5: turn list to dictionary
-        cand_pairs = {}
+        prev_num = -1
+        for pgn, physical_pgn_list in logical_to_physical_mapping.items():
+            for num in closest_seq:
+                if num in physical_pgn_list and num > prev_num:
+                    pgn_pairs[pgn] = num
+                    prev_num = num
+                    break
 
-        for num in longest_seq:
-            pgn_set = number_to_page_mapping[num]
-            if len(pgn_set)==1:
-                pgn = next(iter(pgn_set))
-                cand_pairs[pgn] = num
+        self.logger.debug("pgn_pairs:")
+        self.logger.debug(pgn_pairs)
 
-        print("cand_pairs:")
-        print(cand_pairs)
-
-        return cand_pairs
+        return pgn_pairs
 
     def fill_gaps(self, cand_pairs, logical_pg_numbers):
         # go through the logical numbers, and fill the gap if any
         if len(cand_pairs) == 0:
-            return []
+            return {}
 
         n = len(logical_pg_numbers)
         unfilled_pgn = -1
@@ -276,11 +339,11 @@ class PageNumberExtractor:
         while i < n:
             while i<n and result[i] != -1:
                 i += 1
-            
+
             j = i+1
             while j<n and result[j] == -1:
                 j += 1
-            
+
             # set pgn from page i (inclusive) to j (exclusive)
             if (i>0):
                 k = i
@@ -298,11 +361,14 @@ class PageNumberExtractor:
         return { idx : val for idx, val in enumerate(result) }
 
 if __name__ == "__main__":
-    pdf_file = sys.argv[1]
-    
+    CUR_DIR = os.path.dirname(os.path.realpath(__file__))
+
+    #pdf_file = sys.argv[1]
+    pdf_file = CUR_DIR + os.path.sep + r"..\tests\sample-pdfs\2-col-pubmed-2.pdf" # 
+
     print("pdf_file: " + pdf_file)
 
-    extractor = PageNumberExtractor()
+    extractor = PageNumberExtractor(logging.DEBUG)
     page_numbers = extractor.process(pdf_file)
 
     print("\nresult:")
